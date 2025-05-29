@@ -5,3 +5,4 @@ reportlab
 streamlit-pdf-viewer
 PyMuPDF 
 Pillow
+snowflake-snowpark-python
