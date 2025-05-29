@@ -2,7 +2,6 @@ streamlit
 pandas
 openpyxl
 reportlab
-pywin32
 streamlit-pdf-viewer
 PyMuPDF 
 Pillow
