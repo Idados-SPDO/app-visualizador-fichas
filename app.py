@@ -46,13 +46,13 @@ def load_image_bytes(filename: str) -> bytes | None:
         return None
 
 
-@st.dialog("Ficha Técnica", width="medium")
+@st.dialog("Ficha Técnica", width="large")
 def show_image_dialog(image_bytes: bytes, filename: str):
     st.subheader(Path(filename).stem)
 
     # 1) Carrega e recorta a imagem se ultrapassar a altura máxima
     img = Image.open(BytesIO(image_bytes))
-    height_desejada = 2500
+    height_desejada = 3600
     largura_original, altura_original = img.size
     if altura_original > height_desejada:
         caixa = (0, 0, largura_original, height_desejada)
@@ -197,7 +197,7 @@ def show_image_dialog(image_bytes: bytes, filename: str):
     </script>
     '''
 
-    st_html(html_code, height=800)
+    st_html(html_code, height=1500)
 
 
 @st.cache_data(show_spinner=False)
