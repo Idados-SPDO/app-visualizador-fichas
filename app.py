@@ -45,159 +45,71 @@ def load_image_bytes(filename: str) -> bytes | None:
         # Aqui podemos logar ou simplesmente retornar None
         return None
 
-
 @st.dialog("Ficha Técnica", width="large")
 def show_image_dialog(image_bytes: bytes, filename: str):
     st.subheader(Path(filename).stem)
 
-    # 1) Carrega e recorta a imagem se ultrapassar a altura máxima
+    # carrega e mostra tamanho original
     img = Image.open(BytesIO(image_bytes))
-    height_desejada = 3600
-    largura_original, altura_original = img.size
-    if altura_original > height_desejada:
-        caixa = (0, 0, largura_original, height_desejada)
-        img = img.crop(caixa)
+    largura, altura = img.size
 
-    # 2) Converte a imagem recortada para base64
-    buffer = BytesIO()
-    img.save(buffer, format="PNG")
-    b64 = base64.b64encode(buffer.getvalue()).decode()
+    # helper para base64
+    def to_b64(im: Image.Image) -> str:
+        buf = BytesIO()
+        im.save(buf, format="PNG")
+        return base64.b64encode(buf.getvalue()).decode()
 
-    # 3) HTML + CSS + JS para zoom dinâmico
-    html_code = f'''
+    # recorte
+    threshold = 2600
+    img1 = img.crop((0, 0, largura, min(altura, threshold)))
+    img2 = img.crop((0, threshold, largura, altura)) if altura > threshold else None
+
+    b64_1 = to_b64(img1)
+    b64_2 = to_b64(img2) if img2 else None
+
+    # template de zoom/drag (IDs parametrizados por {suf})
+    html_template = '''
     <style>
-      html, body {{
-        margin: 0;
-        padding: 0;
-        width: 100%;
-        height: 100%;
-      }}
-      .container-all {{
-        display: flex;
-        flex-direction: column;
-        height: 100%;
-      }}
-      .controls {{
-        display: flex;
-        justify-content: center;
-        gap: 1rem;
-        margin: 0.5rem 0;
-      }}
-      .controls button {{
-        padding: 0.4rem 1rem;
-        font-size: 1rem;
-        border: 1px solid #ccc;
-        background: #f9f9f9;
-        border-radius: 4px;
-        cursor: pointer;
-      }}
-      .controls button:active {{
-        background: #e0e0e0;
-      }}
-      .img-wrapper {{
-        flex: 1;
-        position: relative;
-        overflow: auto;
-        background: #f5f5f5;
-      }}
-      .zoomable {{
-        display: block;
-        width: 100%;
-        height: auto;
-        transition: width 0.2s ease, height 0.2s ease;
-        cursor: grab;
-      }}
-      .zoomable:active {{
-        cursor: grabbing;
-      }}
+      .img-wrapper {{ overflow:auto; cursor:grab; background:#f5f5f5; height:910px; }}
+      .img-wrapper:active {{ cursor:grabbing; }}
+      .zoomable {{ width:100%; height:auto; transition:width 0.2s ease; user-select:none; }}
+      .controls {{ text-align:center; margin-bottom:8px; }}
+      .controls button {{ margin:0 4px; padding:4px 12px; }}
     </style>
-
-    <div class="container-all">
-      <div class="controls">
-        <button id="btnZoomIn">Zoom In</button>
-        <button id="btnZoomOut">Zoom Out</button>
-      </div>
-      <div class="img-wrapper" id="wrapper">
-        <img
-          id="imgZoom"
-          src="data:image/png;base64,{b64}"
-          class="zoomable"
-          alt="{filename}"
-        />
-      </div>
+    <div class="controls">
+      <button id="btnIn_{suf}">+</button>
+      <button id="btnOut_{suf}">−</button>
     </div>
-
+    <div class="img-wrapper" id="wrap_{suf}">
+      <img id="img_{suf}" src="data:image/png;base64,{b64}" class="zoomable"/>
+    </div>
     <script>
-      const wrapper = document.getElementById("wrapper");
-      const img = document.getElementById("imgZoom");
-      const btnIn = document.getElementById("btnZoomIn");
-      const btnOut = document.getElementById("btnZoomOut");
-
-      let scale = 1;
-      const maxScale = 10;
-      const minScale = 1;
-      const step = 0.5;
-
-      function updateImageSize() {{
-        img.style.width = (100 * scale) + '%';
-      }}
-
-      btnIn.addEventListener("click", () => {{
-        if (scale + step <= maxScale) {{
-          scale = parseFloat((scale + step).toFixed(2));
-          updateImageSize();
-        }}
-      }});
-
-      btnOut.addEventListener("click", () => {{
-        if (scale - step >= minScale) {{
-          scale = parseFloat((scale - step).toFixed(2));
-          updateImageSize();
-        }}
-      }});
-
-      img.addEventListener("dblclick", () => {{
-        scale = 1;
-        updateImageSize();
-      }});
-
-      let isDragging = false;
-      let startX, startY, scrollLeft, scrollTop;
-
-      wrapper.addEventListener("mousedown", (e) => {{
-        if (scale === 1) return;
-        isDragging = true;
-        wrapper.classList.add("dragging");
-        startX = e.pageX - wrapper.offsetLeft;
-        startY = e.pageY - wrapper.offsetTop;
-        scrollLeft = wrapper.scrollLeft;
-        scrollTop = wrapper.scrollTop;
-      }});
-
-      wrapper.addEventListener("mouseup", () => {{
-        isDragging = false;
-        wrapper.classList.remove("dragging");
-      }});
-
-      wrapper.addEventListener("mouseleave", () => {{
-        isDragging = false;
-        wrapper.classList.remove("dragging");
-      }});
-
-      wrapper.addEventListener("mousemove", (e) => {{
-        if (!isDragging) return;
-        e.preventDefault();
-        const x = e.pageX - wrapper.offsetLeft;
-        const y = e.pageY - wrapper.offsetTop;
-        const walkX = (startX - x);
-        const walkY = (startY - y);
-        wrapper.scrollLeft = scrollLeft + walkX;
-        wrapper.scrollTop = scrollTop + walkY;
-      }});
+      const img_{suf}=document.getElementById("img_{suf}");
+      const wrap_{suf}=document.getElementById("wrap_{suf}");
+      let scale_{suf}=1;
+      document.getElementById("btnIn_{suf}").onclick=()=>{{ scale_{suf}=Math.min(scale_{suf}+0.5,10); img_{suf}.style.width=(100*scale_{suf})+'%'; }};
+      document.getElementById("btnOut_{suf}").onclick=()=>{{ scale_{suf}=Math.max(scale_{suf}-0.5,1); img_{suf}.style.width=(100*scale_{suf})+'%'; }};
+      img_{suf}.ondblclick=()=>{{ scale_{suf}=1; img_{suf}.style.width='100%'; }};
+      let isDown_{suf}=false, startX_{suf}, startY_{suf}, scrollL_{suf}, scrollT_{suf};
+      wrap_{suf}.addEventListener('mousedown',e=>{{ if(scale_{suf}===1)return; isDown_{suf}=true; startX_{suf}=e.pageX-wrap_{suf}.offsetLeft; startY_{suf}=e.pageY-wrap_{suf}.offsetTop; scrollL_{suf}=wrap_{suf}.scrollLeft; scrollT_{suf}=wrap_{suf}.scrollTop; }});
+      wrap_{suf}.addEventListener('mouseup',()=>isDown_{suf}=false);
+      wrap_{suf}.addEventListener('mouseleave',()=>isDown_{suf}=false);
+      wrap_{suf}.addEventListener('mousemove',e=>{{ if(!isDown_{suf})return; e.preventDefault(); const x=e.pageX-wrap_{suf}.offsetLeft; const y=e.pageY-wrap_{suf}.offsetTop; wrap_{suf}.scrollLeft=scrollL_{suf}-(x-startX_{suf}); wrap_{suf}.scrollTop=scrollT_{suf}-(y-startY_{suf}); }});
     </script>
     '''
 
-    st_html(html_code, height=1500)
+    # define abas dinamicamente
+    if img2:
+        tabs = st.tabs([f"Ficha", f"Componentes"])
+        with tabs[0]:
+            st_html(html_template.format(suf="tab1", b64=b64_1), height=900)
+        with tabs[1]:
+            st_html(html_template.format(suf="tab2", b64=b64_2), height=900)
+    else:
+        tabs = st.tabs(["Ficha"])
+        with tabs[0]:
+            st_html(html_template.format(suf="single", b64=b64_1), height=900)
+
 
 
 @st.cache_data(show_spinner=False)
