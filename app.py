@@ -24,15 +24,8 @@ def get_session() -> Session:
 
 session = get_session()
 
-
-@st.cache_data(show_spinner=False)
-def list_images() -> list[str]:
-    rows = session.sql("LIST @ST_IMGS").collect()
-    return [r["name"].split("/", 1)[1] for r in rows]
-
-
 # 1) Ajuste em load_image_bytes: capturar erro “file does not exist” e retornar None
-@st.cache_data(show_spinner=False)
+@st.cache_data(show_spinner=False,  ttl=3600)
 def load_image_bytes(filename: str) -> bytes | None:
     """
     Tenta buscar os bytes do arquivo no stage @ST_IMGS/{filename}.
@@ -131,8 +124,9 @@ def fetch_business_with_images() -> pd.DataFrame:
 st.title("📋 Visualizador de Fichas Técnicas")
 
 st.logo('logo_ibre.png')
-# 1) Carrega o DataFrame da VIEW (já contendo as colunas Categoria, Elementar e Nome_Arquivo)
-df = fetch_business_with_images()
+
+with st.spinner("Carregando registros da base…"):
+    df = fetch_business_with_images()
 df["NOME_ARQUIVO"] = (
     df["NOME_ARQUIVO"]
       .astype(str)  # garante que seja string
