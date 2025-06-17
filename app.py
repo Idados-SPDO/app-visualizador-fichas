@@ -119,6 +119,15 @@ def fetch_business_with_images() -> pd.DataFrame:
     pdf = snow_df.to_pandas()
     return pdf
 
+@st.cache_data(show_spinner=False)
+def fetch_colectors() -> pd.DataFrame:
+    query = """
+        SELECT *
+        FROM TB_VISUALIZADOR_COLETORES
+    """
+    snow_df = session.sql(query)
+    pdf = snow_df.to_pandas()
+    return pdf
 
 # ─────────── Corpo principal do app ───────────
 st.title("📋 Visualizador de Fichas Técnicas")
@@ -127,6 +136,9 @@ st.logo('logo_ibre.png')
 
 with st.spinner("Carregando registros da base…"):
     df = fetch_business_with_images()
+    df_coletor = fetch_colectors()
+    df_coletor["ELEMENTAR"] = df_coletor["ELEMENTAR"].astype(str)
+
 df["NOME_ARQUIVO"] = (
     df["NOME_ARQUIVO"]
       .astype(str)  # garante que seja string
@@ -134,6 +146,14 @@ df["NOME_ARQUIVO"] = (
 )
 # 2) Sidebar: filtros para coluna "categoria" e coluna "elementar"
 st.sidebar.header("Filtros:")
+coletores = sorted(df_coletor["COLETOR"].dropna().unique().tolist())
+
+filtro_coletor = st.sidebar.selectbox(
+    "Coletor",
+    options=["Todos"] + coletores,
+    index=0
+)
+
 
 valores_categoria = sorted(df["CATEGORIA"].dropna().unique().tolist())
 filtro_categoria = st.sidebar.multiselect(
@@ -158,6 +178,14 @@ filtro_familia = st.sidebar.multiselect(
 
 # 3) Filtra o DataFrame de negócio
 df_filtrado = df.copy()
+if filtro_coletor != "Todos":
+    elementares_do_coletor = (
+        df_coletor[df_coletor["COLETOR"] == filtro_coletor]
+        ["ELEMENTAR"]
+        .dropna()
+        .unique()
+    )
+    df_filtrado = df_filtrado[df_filtrado["ELEMENTAR"].isin(elementares_do_coletor)]
 
 if filtro_categoria:
     df_filtrado = df_filtrado[df_filtrado["CATEGORIA"].isin(filtro_categoria)]
@@ -165,7 +193,6 @@ if filtro_elementar:
     df_filtrado = df_filtrado[df_filtrado["ELEMENTAR"].isin(filtro_elementar)]
 if filtro_familia:
     df_filtrado = df_filtrado[df_filtrado["FAMILIA"].isin(filtro_familia)]
-
 
 # 4) Se quiser um filtro de substring no nome do arquivo, pode manter assim:
 query = st.sidebar.text_input("🔎 Buscar por nome de arquivo")
