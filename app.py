@@ -13,7 +13,8 @@ import pandas as pd
 st.set_page_config(
     page_title="Visualizador de Fichas Técnicas",
     page_icon="logo_fgv.png",
-    layout="wide"
+    layout="wide",
+    initial_sidebar_state="expanded"
 )
 
 
