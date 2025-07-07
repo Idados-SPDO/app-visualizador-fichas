@@ -4,6 +4,14 @@ from snowflake.snowpark.functions import col
 import pandas as pd
 import math
 
+# imports adicionais para zoom/pan e abas
+from pathlib import Path
+from io import BytesIO
+from PIL import Image
+import base64
+from streamlit.components.v1 import html as st_html
+
+
 # ─────────── Configurações de página ───────────
 st.set_page_config(
     page_title="Visualizador de Fichas Técnicas",
@@ -19,15 +27,11 @@ st.logo('logo_ibre.png')
 st.markdown(
     """
     <style>
-      div[aria-label="dialog"] > button[aria-label="Close"] {
-        display: none !important;
-      }
+      div[aria-label="dialog"] > button[aria-label="Close"] {display: none !important;}
       [data-testid="stAppViewContainer"] > div:first-child:has(div[aria-label="dialog"]) {
         pointer-events: none;
       }
-      div[aria-label="dialog"] {
-        pointer-events: auto;
-      }
+      div[aria-label="dialog"] {pointer-events: auto;}
     </style>
     """,
     unsafe_allow_html=True,
@@ -79,13 +83,95 @@ def clear_selection():
 # ─────────── Diálogo ───────────
 @st.dialog("Visualizador de Imagem de Insumo", width="large")
 def show_insumo_dialog(cod_interno: str, nome: str, elementar: str):
-    st.write(f"**{cod_interno} – {nome}**")
+    st.subheader(f"{cod_interno} – {nome}")
     st.write(f"**Elementar:** {elementar}")
-    img = fetch_insumo_img(cod_interno)
-    st.image(img, use_container_width=True)
+
+    # carrega PIL.Image a partir dos bytes
+    img = Image.open(BytesIO(fetch_insumo_img(cod_interno)))
+    largura, altura = img.size
+
+    # divide em duas partes, se for muito alta
+    threshold = 2200
+    img1 = img.crop((0, 0, largura, min(altura, threshold)))
+    img2 = img.crop((0, threshold, largura, altura)) if altura > threshold else None
+
+    # helper para converter em base64
+    def to_b64(im: Image.Image) -> str:
+        buf = BytesIO()
+        im.save(buf, format="PNG")
+        return base64.b64encode(buf.getvalue()).decode()
+
+    b64_1 = to_b64(img1)
+    b64_2 = to_b64(img2) if img2 else None
+
+    # HTML + JS para zoom in/out & pan
+    html_template = '''
+    <style>
+      .img-wrapper {{ overflow:auto; cursor:grab; background:#f5f5f5; height:85vh; }}
+      .img-wrapper:active {{ cursor:grabbing; }}
+      .zoomable {{ width:100%; height:auto; transition:width .2s ease; user-select:none; }}
+      .controls {{ text-align:center; margin-bottom:8px; }}
+      .controls button {{ margin:0 4px; padding:4px 12px; }}
+    </style>
+    <div class="controls">
+      <button id="in_{suf}">+</button>
+      <button id="out_{suf}">−</button>
+    </div>
+    <div class="img-wrapper" id="wrap_{suf}">
+      <img id="img_{suf}" src="data:image/png;base64,{b64}" class="zoomable"/>
+    </div>
+    <script>
+      const img_{suf}=document.getElementById("img_{suf}");
+      const wrap_{suf}=document.getElementById("wrap_{suf}");
+      let scale_{suf}=1;
+      document.getElementById("in_{suf}").onclick=() => {{
+        scale_{suf}=Math.min(scale_{suf}+0.5,10);
+        img_{suf}.style.width=(100*scale_{suf})+'%';
+      }};
+      document.getElementById("out_{suf}").onclick=() => {{
+        scale_{suf}=Math.max(scale_{suf}-0.5,1);
+        img_{suf}.style.width=(100*scale_{suf})+'%';
+      }};
+      img_{suf}.ondblclick=() => {{ scale_{suf}=1; img_{suf}.style.width='100%'; }};
+      let isDown_{suf}=false, startX_{suf}, startY_{suf}, scrollL_{suf}, scrollT_{suf};
+      wrap_{suf}.addEventListener('mousedown', e => {{
+        if (scale_{suf}===1) return;
+        isDown_{suf}=true;
+        startX_{suf}=e.pageX-wrap_{suf}.offsetLeft;
+        startY_{suf}=e.pageY-wrap_{suf}.offsetTop;
+        scrollL_{suf}=wrap_{suf}.scrollLeft;
+        scrollT_{suf}=wrap_{suf}.scrollTop;
+      }});
+      wrap_{suf}.addEventListener('mouseup', () => isDown_{suf}=false);
+      wrap_{suf}.addEventListener('mouseleave', () => isDown_{suf}=false);
+      wrap_{suf}.addEventListener('mousemove', e => {{
+        if (!isDown_{suf}) return;
+        e.preventDefault();
+        const x=e.pageX-wrap_{suf}.offsetLeft;
+        const y=e.pageY-wrap_{suf}.offsetTop;
+        wrap_{suf}.scrollLeft=scrollL_{suf}-(x-startX_{suf});
+        wrap_{suf}.scrollTop=scrollT_{suf}-(y-startY_{suf});
+      }});
+    </script>
+    '''
+
+    # cria abas dinamicamente
+    if img2:
+        tabs = st.tabs(["Ficha", "Componentes"])
+        with tabs[0]:
+            st_html(html_template.format(suf="a", b64=b64_1), height=900)
+        with tabs[1]:
+            st_html(html_template.format(suf="b", b64=b64_2), height=900)
+    else:
+        tabs = st.tabs(["Ficha"])
+        with tabs[0]:
+            st_html(html_template.format(suf="single", b64=b64_1), height=900)
+
+    # botão para fechar
     if st.button("Fechar"):
         clear_selection()
         st.rerun()
+
 
 # ─────────── Carrega dados ───────────
 df_meta       = fetch_insumos_meta()
