@@ -48,7 +48,7 @@ session = get_session()
 @st.cache_data
 def fetch_insumos_meta() -> pd.DataFrame:
     sql = """
-      SELECT COD_INTERNO, ELEMENTAR, INSUMO, JOB
+      SELECT *
       FROM TB_INSUMOS
       ORDER BY COD_INTERNO
     """
@@ -82,10 +82,10 @@ def clear_selection():
 
 # ─────────── Diálogo ───────────
 @st.dialog("Visualizador de Imagem de Insumo", width="large")
-def show_insumo_dialog(cod_interno: str, nome: str, elementar: str):
+def show_insumo_dialog(cod_interno: str, nome: str, elementar: str, projeto: str):
     st.subheader(f"{cod_interno} – {nome}")
     st.write(f"**Elementar:** {elementar}")
-
+    st.write(f"**Projeto:** {projeto}")
     # carrega PIL.Image a partir dos bytes
     img = Image.open(BytesIO(fetch_insumo_img(cod_interno)))
     largura, altura = img.size
@@ -228,9 +228,23 @@ job_opts = ["Todos"] + sorted(
         .tolist()
 )
 selected_job = st.sidebar.selectbox(
-    "🔽 Filtrar por JOB",
+    "🔽 Filtrar por Job",
     job_opts,
     key="job",
+    on_change=clear_selection
+)
+
+project_opts = ["Todos"] + sorted(
+    df_meta["PROJETO"]
+        .dropna()
+        .unique()
+        .tolist()
+)
+
+selected_project = st.sidebar.selectbox(
+    "🔽 Filtrar por Projeto",
+    project_opts,
+    key="project",
     on_change=clear_selection
 )
 
@@ -238,6 +252,8 @@ selected_job = st.sidebar.selectbox(
 if selected_job != "Todos":
     df_meta = df_meta[df_meta["JOB"] == selected_job]
 
+if selected_project != "Todos":
+    df_meta = df_meta[df_meta["PROJETO"] == selected_project]
 # Aplica filtros à tabela de insumos
 if search:
     mask_cod  = df_meta["COD_INTERNO"].astype(str).str.contains(search, case=False, na=False)
@@ -309,11 +325,14 @@ for i, (_, row) in enumerate(page_df.iterrows()):
         st.session_state.selected           = cod
         st.session_state.selected_nome      = nome
         st.session_state.selected_elementar = row["ELEMENTAR"]
+        st.session_state.selected_projeto   = row["PROJETO"]
+        
 
 # ─────────── Abre diálogo se selecionado ───────────
 if "selected" in st.session_state:
     show_insumo_dialog(
         st.session_state.selected,
         st.session_state.selected_nome,
-        st.session_state.selected_elementar
+        st.session_state.selected_elementar,
+        st.session_state.selected_projeto
     )
