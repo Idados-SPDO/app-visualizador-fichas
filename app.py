@@ -3,40 +3,18 @@ from snowflake.snowpark import Session
 from snowflake.snowpark.functions import col
 import pandas as pd
 import math
-
-# imports adicionais para zoom/pan e abas
 from pathlib import Path
 from io import BytesIO
 from PIL import Image
 import base64
 from streamlit.components.v1 import html as st_html
 
-
-# ─────────── Configurações de página ───────────
 st.set_page_config(
     page_title="Visualizador de Fichas Técnicas",
     page_icon="logo_fgv.png",
     layout="wide",
     initial_sidebar_state="expanded"
 )
-
-st.title("📋 Visualizador de Fichas Técnicas")
-
-st.logo('logo_ibre.png')
-# ─────────── CSS para desabilitar o “X” e o clique fora ───────────
-st.markdown(
-    """
-    <style>
-      div[aria-label="dialog"] > button[aria-label="Close"] {display: none !important;}
-      [data-testid="stAppViewContainer"] > div:first-child:has(div[aria-label="dialog"]) {
-        pointer-events: none;
-      }
-      div[aria-label="dialog"] {pointer-events: auto;}
-    </style>
-    """,
-    unsafe_allow_html=True,
-)
-
 # ─────────── Sessão Snowflake ───────────
 @st.cache_resource(show_spinner=False)
 def get_session() -> Session:
@@ -46,13 +24,68 @@ session = get_session()
 
 # ─────────── Fetchers ───────────
 @st.cache_data
-def fetch_insumos_meta() -> pd.DataFrame:
+def fetch_coletor_map() -> pd.DataFrame:
     sql = """
       SELECT *
-      FROM TB_INSUMOS
-      ORDER BY COD_INTERNO
+      FROM TB_VISUALIZADOR_COLETORES
+      ORDER BY COLETOR, ELEMENTAR
     """
     return session.sql(sql).to_pandas()
+
+@st.cache_data(show_spinner=False)
+def fetch_meta_page(
+    search: str,
+    coletor: str,
+    elementar: str,
+    job: str,
+    project: str,
+    page: int,
+    per_page: int = 20
+) -> tuple[pd.DataFrame, int]:
+    # Monta cláusula WHERE dinamicamente
+    where_clauses = []
+    if search:
+        where_clauses.append(
+            "(COD_INTERNO ILIKE '%{0}%' OR INSUMO ILIKE '%{0}%')".format(search.replace("'", ""))
+        )
+    if coletor != "Todos":
+        where_clauses.append(
+            f"ELEMENTAR IN (SELECT ELEMENTAR FROM TB_VISUALIZADOR_COLETORES WHERE COLETOR = '{coletor}')"
+        )
+    if elementar != "Todos":
+        where_clauses.append(f"ELEMENTAR = '{elementar}'")
+    if job != "Todos":
+        where_clauses.append(f"JOB = '{job}'")
+    if project != "Todos":
+        where_clauses.append(f"PROJETO = '{project}'")
+
+    where_sql = ""
+    if where_clauses:
+        where_sql = "WHERE " + " AND ".join(where_clauses)
+
+    # Conta total de itens
+    count_sql = f"SELECT COUNT(*) AS CNT FROM TB_INSUMOS {where_sql}"
+    total = session.sql(count_sql).to_pandas().iloc[0, 0]
+
+    # Busca apenas a página atual
+    offset = (page - 1) * per_page
+    data_sql = f"""
+      SELECT COD_INTERNO, INSUMO, ELEMENTAR, JOB, PROJETO
+      FROM TB_INSUMOS
+      {where_sql}
+      ORDER BY COD_INTERNO
+      LIMIT {per_page}
+      OFFSET {offset}
+    """
+    df = session.sql(data_sql).to_pandas()
+    return df, total
+
+# ─────────── Carrega dados auxiliares ───────────
+df_coletor_map = fetch_coletor_map()
+
+for key in ("elementar", "job", "project"):
+    if key not in st.session_state:
+        st.session_state[key] = "Todos"
 
 @st.cache_data
 def fetch_insumo_img(cod_interno: str) -> bytes:
@@ -65,22 +98,68 @@ def fetch_insumo_img(cod_interno: str) -> bytes:
     )
     return bytes(df.iloc[0, 0])
 
-@st.cache_data
-def fetch_coletor_map() -> pd.DataFrame:
-    # Puxa todos os pares COLETOR–ELEMENTAR
-    sql = """
-      SELECT *
-      FROM TB_VISUALIZADOR_COLETORES
-      ORDER BY COLETOR, ELEMENTAR
-    """
-    return session.sql(sql).to_pandas()
-
-# ─────────── Helpers de estado ───────────
 def clear_selection():
     for k in ("selected", "selected_nome", "selected_elementar"):
         st.session_state.pop(k, None)
 
-# ─────────── Diálogo ───────────
+# ─────────── Sidebar: busca + filtros ───────────
+search            = st.sidebar.text_input("🔍 Buscar insumo ou código", key="search", on_change=lambda: st.session_state.pop("page", None))
+selected_coletor  = st.sidebar.selectbox("🔽 Selecione Coletor", ["Todos"] + sorted(df_coletor_map["COLETOR"].dropna().unique()), key="coletor", on_change=lambda: st.session_state.pop("page", None))
+elementar_opts = (
+    ["Todos"]
+    + sorted(
+        session
+        .table("TB_INSUMOS")
+        .select("ELEMENTAR")
+        .distinct()
+        .to_pandas()["ELEMENTAR"]
+        .dropna()
+        .tolist()
+    )
+)
+st.sidebar.selectbox(
+    "🔽 Filtrar por Elementar",
+    elementar_opts,
+    key="elementar",
+    on_change=lambda: st.session_state.pop("page", None)
+)
+job_opts = (
+    ["Todos"]
+    + sorted(
+        session
+        .table("TB_INSUMOS")
+        .select("JOB")
+        .distinct()
+        .to_pandas()["JOB"]
+        .dropna()
+        .tolist()
+    )
+)
+st.sidebar.selectbox(
+    "🔽 Filtrar por Job",
+    job_opts,
+    key="job",
+    on_change=lambda: st.session_state.pop("page", None)
+)
+project_opts = (
+    ["Todos"]
+    + sorted(
+        session
+        .table("TB_INSUMOS")
+        .select("PROJETO")
+        .distinct()
+        .to_pandas()["PROJETO"]
+        .dropna()
+        .tolist()
+    )
+)
+st.sidebar.selectbox(
+    "🔽 Filtrar por Projeto",
+    project_opts,
+    key="project",
+    on_change=lambda: st.session_state.pop("page", None)
+)
+# … demais selects (elementar, job, project) …
 @st.dialog("Visualizador de Imagem de Insumo", width="large")
 def show_insumo_dialog(cod_interno: str, nome: str, elementar: str, projeto: str):
     st.subheader(f"{cod_interno} – {nome}")
@@ -171,162 +250,53 @@ def show_insumo_dialog(cod_interno: str, nome: str, elementar: str, projeto: str
     if st.button("Fechar"):
         clear_selection()
         st.rerun()
-
-
-# ─────────── Carrega dados ───────────
-df_meta       = fetch_insumos_meta()
-df_coletor_map = fetch_coletor_map()
-
-# ─────────── Sidebar: busca + filtros ───────────
-search = st.sidebar.text_input(
-    "🔍 Buscar insumo ou código",
-    key="search",
-    on_change=clear_selection
-)
-
-elementares_base = sorted(
-    df_meta["ELEMENTAR"]
-        .dropna()
-        .unique()
-        .tolist()
-)
-
-coletors_raw = df_coletor_map["COLETOR"].dropna().unique().tolist()
-coletors_raw.sort()  # ou: coletors_raw = sorted(coletors_raw)
-coletors = ["Todos"] + coletors_raw
-
-selected_coletor = st.sidebar.selectbox(
-    "🔽 Selecione Coletor",
-    coletors,
-    key="coletor",
-    on_change=clear_selection
-)
-
-# Dropdown de Elementares dependente do Coletor
-if selected_coletor == "Todos":
-    # todos os elementares que existem em TB_INSUMOS
-    elementar_opts = elementares_base
-else:
-    # elementares que o coletor tem *e* que existem em TB_INSUMOS
-    elementar_opts = sorted(
-        set(
-            df_coletor_map[df_coletor_map["COLETOR"] == selected_coletor]["ELEMENTAR"]
-        ) & set(elementares_base)
-    )
-elementares = ["Todos"] + elementar_opts
-selected_elementar = st.sidebar.selectbox(
-    "🔽 Filtrar por Elementar",
-    elementares,
-    key="elementar",
-    on_change=clear_selection
-)
-
-job_opts = ["Todos"] + sorted(
-    df_meta["JOB"]
-        .dropna()
-        .unique()
-        .tolist()
-)
-selected_job = st.sidebar.selectbox(
-    "🔽 Filtrar por Job",
-    job_opts,
-    key="job",
-    on_change=clear_selection
-)
-
-project_opts = ["Todos"] + sorted(
-    df_meta["PROJETO"]
-        .dropna()
-        .unique()
-        .tolist()
-)
-
-selected_project = st.sidebar.selectbox(
-    "🔽 Filtrar por Projeto",
-    project_opts,
-    key="project",
-    on_change=clear_selection
-)
-
-# ─────────── Aplica filtro de JOB ───────────
-if selected_job != "Todos":
-    df_meta = df_meta[df_meta["JOB"] == selected_job]
-
-if selected_project != "Todos":
-    df_meta = df_meta[df_meta["PROJETO"] == selected_project]
-# Aplica filtros à tabela de insumos
-if search:
-    mask_cod  = df_meta["COD_INTERNO"].astype(str).str.contains(search, case=False, na=False)
-    mask_nome = df_meta["INSUMO"].str.contains(search, case=False, na=False)
-    df_meta   = df_meta[mask_cod | mask_nome]
-
-# Se escolher um Coletor, mantemos só os insumos cujos ELEMENTAR estejam naquele coletor
-if selected_coletor != "Todos":
-    df_meta = df_meta[df_meta["ELEMENTAR"].isin(elementar_opts)]
-
-# Se escolher um Elementar específico, filtramos ainda mais
-if selected_elementar != "Todos":
-    df_meta = df_meta[df_meta["ELEMENTAR"] == selected_elementar]
-
-# ─────────── Paginação ───────────
-total_items = len(df_meta)
-per_page    = 20
-total_pag   = max(1, math.ceil(total_items / per_page))
-
+# ─────────── Paginação paginada no banco ───────────
+per_page = 20
 if "page" not in st.session_state:
     st.session_state.page = 1
-if st.session_state.page > total_pag:
-    st.session_state.page = total_pag
 
+page_df, total_items = fetch_meta_page(
+    search=search,
+    coletor=selected_coletor,
+    elementar=st.session_state.elementar,
+    job=st.session_state.job,
+    project=st.session_state.project,
+    page=st.session_state.page,
+    per_page=per_page
+)
+
+total_pag = max(1, math.ceil(total_items / per_page))
+
+# Navegação de páginas
 def prev_page():
-    st.session_state.page -= 1
-    clear_selection()
-
+    st.session_state.page = max(1, st.session_state.page - 1)
 def next_page():
-    st.session_state.page += 1
-    clear_selection()
+    st.session_state.page = min(total_pag, st.session_state.page + 1)
 
-col_prev, col_info, col_next = st.columns([1,6,1])
-
-with col_prev:
-    st.button(
-        "← Anterior",
-        on_click=prev_page,
-        disabled=st.session_state.page <= 1
-    )
-
-with col_info:
+col1, col2, col3 = st.columns([1,6,1])
+with col1:
+    st.button("← Anterior", on_click=prev_page, disabled=st.session_state.page <= 1)
+with col2:
     start = (st.session_state.page - 1) * per_page + 1
     end   = min(start + per_page - 1, total_items)
-    st.markdown(
-        f"<center><b>Página {st.session_state.page} / {total_pag}</b><br>"
-        f"<i>itens {start}–{end} de {total_items}</i></center>",
-        unsafe_allow_html=True
-    )
+    st.markdown(f"<center><b>Página {st.session_state.page} / {total_pag}</b><br><i>itens {start}–{end} de {total_items}</i></center>", unsafe_allow_html=True)
+with col3:
+    st.button("Próximo →", on_click=next_page, disabled=st.session_state.page >= total_pag)
 
-with col_next:
-    st.button(
-        "Próximo →",
-        on_click=next_page,
-        disabled=st.session_state.page >= total_pag
-    )
 st.write("---")
-start_idx = (st.session_state.page - 1) * per_page
-page_df   = df_meta.iloc[start_idx : start_idx + per_page]
 
-# ─────────── Botões em 3 colunas ───────────
+# ─────────── Renderiza botões com os 20 itens da página ───────────
 cols = st.columns(3)
-for i, (_, row) in enumerate(page_df.iterrows()):
-    cod   = str(row["COD_INTERNO"])
-    nome  = str(row["INSUMO"])
+for i, row in page_df.iterrows():
+    cod  = str(row["COD_INTERNO"])
+    nome = row["INSUMO"]
     label = nome if len(nome) <= 20 else nome[:20] + "…"
-    button_col = cols[i % 3]
-    if button_col.button(f"{cod} – {label}", key=f"btn_{cod}", help=nome):
-        st.session_state.selected           = cod
-        st.session_state.selected_nome      = nome
+    c = cols[i % 3]
+    if c.button(f"{cod} – {label}", key=f"btn_{cod}", help=nome):
+        st.session_state.selected = cod
+        st.session_state.selected_nome = nome
         st.session_state.selected_elementar = row["ELEMENTAR"]
-        st.session_state.selected_projeto   = row["PROJETO"]
-        
+        st.session_state.selected_projeto = row["PROJETO"]
 
 # ─────────── Abre diálogo se selecionado ───────────
 if "selected" in st.session_state:
